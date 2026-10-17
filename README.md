@@ -1,164 +1,193 @@
 # MedShift LoRa
 
-### Offline-first emergency medicine coordination for rural health centres
+### Offline Medicine Emergency Network for Rural Healthcare
 
-> **Project status:** Hackathon prototype / proposed system. Hardware performance, clinical workflows, and real-world feasibility require validation.
+**MedShift LoRa** is a new, from-scratch project that helps rural health centres communicate urgent medicine shortages and coordinate possible supply responses **without internet or cellular connectivity**. It uses **LoRa radio communication**, a local-first coordination engine, and eventual synchronization when internet connectivity becomes available.
+
+> **Project status:** Proposed hackathon MVP. This README describes the intended system, not features already implemented.
+>
+> **Scope reset:** MedShift LoRa replaces all previous MedShift concepts. The earlier medicine-expiry, FEFO and wastage-optimization systems are **not** part of this project.
 
 ## Problem
 
-Rural health centres may experience shortages of essential medicines while operating with unreliable mobile data or internet connectivity. Even when a nearby facility has potentially usable stock, a disconnected centre may struggle to communicate its need or coordinate a safe, authorized transfer.
+Rural health centres may run low on essential medicines while unreliable internet connectivity delays requests to district hospitals or warehouses. Even if another participating centre has stock, staff may not be able to communicate the requirement promptly or know whether a transfer is feasible.
 
-Conventional cloud-dependent systems cannot reliably exchange updates during connectivity outages. Stock information also becomes stale, so simply identifying an apparent surplus does not mean a transfer is safe or feasible.
+Existing inventory platforms can support medicine supply chains, but this project explores a **connectivity-resilient communication and coordination layer**, not a replacement for official systems.
 
-## Proposed solution
+## Solution
 
-**MedShift LoRa** combines low-bandwidth **LoRa radio communication** with an **offline-first medicine request and matching engine**. Participating facilities can exchange compact shortage alerts and stock-status messages over a configured radio network, evaluate possible sources, and prepare transfer proposals for authorized personnel to verify and approve.
+Equip participating centres and a district coordination hub with LoRa-enabled devices. A centre can send a compact medicine request over radio, receive an acknowledgement, and learn whether a possible source has been identified. The coordination engine uses **locally cached, timestamped stock reports** to suggest candidates, prioritizes urgent requests, and flags uncertain information for verification. Authorized staff make the final transfer decision.
 
-The system is designed to operate locally when internet is unavailable and synchronize records when connectivity returns.
+LoRa does not require internet or cellular service, but **does require compatible hardware and an actual radio path** (direct or through configured relays). It does not transport medicines.
 
 ## Example scenario
 
-1. **Health Centre A** is running low on a critical medicine and has no internet access.
-2. A worker enters a shortage request, specifying the exact medicine/formulation, required quantity, and urgency.
-3. A LoRa node transmits a compact request to a reachable district hub or participating facility.
-4. **Health Centre B** reports possible available stock, with the timestamp of that information.
-5. The matching engine checks compatibility, expiry/shelf-life requirements, minimum reserve stock, transport time, storage conditions, and authorization constraints.
-6. The system proposes a transfer, **not an automatic dispatch**. Staff confirm current stock and approve the movement.
-7. Receipt and status events are recorded offline and synchronized when internet becomes available.
+| Location | Situation |
+| --- | --- |
+| **Centre A** | Critically low on a needed medicine; creates an urgent request |
+| **Centre B** | May have usable stock; must confirm current availability |
+| **Centre C** | No internet; can still participate if reachable by LoRa |
+| **District hub** | Receives requests, identifies candidates and coordinates approvals |
 
-## Core features
+1. Centre A enters a medicine identifier, quantity needed and urgency.
+2. Its device sends a compact, uniquely identified request via LoRa.
+3. The district hub receives and acknowledges the request, directly or via a relay.
+4. The hub searches **last-known** stock reports and identifies Centre B as a *possible* source.
+5. The hub requests fresh stock confirmation from Centre B, if reachable.
+6. Authorized staff review medicine identity, local reserve requirements, handling conditions, expiry suitability, transport feasibility and transfer permissions.
+7. The hub sends Centre A a status update: *received*, *awaiting confirmation*, *proposed*, *approved*, *dispatched*, *delivered* or *unavailable*.
+8. Events are synchronized with the central database when internet connectivity returns.
 
-- **Offline shortage alerts:** Send compact structured requests over LoRa without cellular data.
-- **Facility-to-facility discovery:** Find potentially suitable stock at reachable centres or a district hub.
-- **Constraint-aware matching:** Check exact medicine identity and formulation, quantity, reserve stock, batch expiry, storage compatibility, and route feasibility.
-- **Urgency prioritization:** Rank requests using a configurable, transparent policy rather than arbitrary first-come-first-served allocation.
-- **Stale-data warnings:** Display the age and confidence of stock reports; require fresh confirmation before transfer.
-- **Human approval:** Generate proposals for authorized clinical/pharmacy staff; never autonomously prescribe, substitute, or release medicines.
-- **Store-and-forward sync:** Queue events locally and reconcile them with the central service after connectivity returns.
-- **Audit trail:** Record request, acknowledgement, proposal, approval, dispatch, and receipt events.
-
-## Proposed architecture
+## Architecture
 
 ```text
-┌──────────────────────┐      LoRa radio       ┌──────────────────────┐
-│ Rural Health Centre A│ ────────────────────► │ District Hub / Relay │
-│ Offline app + node   │                       │ LoRa gateway + engine│
-└──────────────────────┘                       └──────────┬───────────┘
-                                                         │
-                                             LoRa / local network
-                                                         │
-                                              ┌──────────▼───────────┐
-                                              │ Rural Health Centre B│
-                                              │ Offline app + node   │
-                                              └──────────────────────┘
-
-When connectivity returns:
-    Local event queues → Sync API → Central database/dashboard
+ Centre A                         Centre B / Centre C
+ [Local UI]                       [Local UI]
+     |                                |
+ [ESP32 + LoRa]  <-- radio -->   [ESP32 + LoRa]
+       \                              /
+        \   [Optional LoRa relay]     /
+         \          |               /
+          [District hub + LoRa radio]
+                      |
+           [Local request/event store]
+                      |
+          [Coordination + matching engine]
+                      |
+           [Human approval workflow]
+                      |
+            (when internet returns)
+                      |
+          [Central database / integration]
 ```
 
-LoRa connectivity depends on radio range, terrain, antennas, regulatory limits, and the presence of compatible nodes or relays. The prototype does **not** assume unlimited range or instant delivery.
+A two-device demo can use **Centre A ↔ district hub** directly; other centres may be simulated. Multi-hop relay networking is an optional extension, not a native guarantee of LoRa.
 
-## How the matching algorithm works
+## Core capabilities (MVP)
 
-**Inputs**
+### 1. LoRa messaging
 
-- Medicine identifier, strength, formulation, and requested quantity
-- Facility stock and batch-level expiry dates
-- Facility minimum reserve quantities and storage capacity
-- Request urgency and timestamp
-- Approximate travel time, vehicle availability, route constraints, and delivery cost
-- Medicine-specific minimum remaining shelf-life and storage requirements
-- Source-data freshness and authorization status
+- Send and receive compact, structured medicine requests without internet.
+- Include sender ID, request ID, message type, timestamp, medicine code, quantity and urgency.
+- Use acknowledgements, bounded retries and deduplication to reduce lost or repeated requests.
+- Authenticate participating devices and protect sensitive information; avoid patient-identifying data in radio messages.
 
-**Process**
+### 2. Offline stock-source matching
 
-1. Reject incompatible medicines, formulations, or strengths.
-2. Exclude stock that is expired, unavailable, reserved, or below a facility's safe reserve.
-3. Reject routes that cannot meet transport, shelf-life, or storage requirements.
-4. Flag stale or unconfirmed information; do not treat it as guaranteed availability.
-5. Rank feasible candidates by urgency, time-to-delivery, available quantity, and logistical cost.
-6. Produce an explainable proposal with reasons and required approvals.
-7. Revalidate the proposal against current stock and operational conditions before dispatch.
+- Read the latest cached stock reports from participating facilities.
+- Filter for the correct medicine and formulation and *potential* available surplus.
+- Never assume a cached stock value is a confirmed available quantity.
+- Request current confirmation before recommending a transfer for approval.
 
-**Output:** A ranked list of **potentially feasible, approval-required** transfer proposals and reasons why alternatives were rejected.
+### 3. Urgency prioritization
 
-## Suggested tech stack
+- Prioritize requests using a documented, configurable policy considering clinical criticality, shortage severity and time sensitivity.
+- Incorporate delivery feasibility where reliable transport information exists.
+- Show the reason for each priority; clinical policies require expert validation.
 
-| Layer | Candidate technology |
-|---|---|
-| Radio nodes | ESP32 + compatible LoRa modules (for example SX127x-based boards) |
-| Device firmware | Arduino framework or ESP-IDF |
-| Offline interface | React PWA or lightweight local web app |
-| Matching engine | Python + FastAPI |
-| Local storage | SQLite / IndexedDB |
-| Central storage | PostgreSQL |
-| Sync | Event queue with unique IDs, retries, deduplication, and conflict handling |
-| Visualization | React dashboard showing facilities, requests, and transfer proposals |
+### 4. Stale-data protection
 
-These are **suggested** components, not claims of an already implemented codebase.
+- Store report timestamps and indicate when inventory or transport information is old.
+- Mark candidate sources as **unverified** until confirmed.
+- Prevent automatic dispatch or inventory deductions based solely on stale reports.
 
-## LoRa message design
+### 5. Eventual synchronization
 
-Messages should be compact because LoRa supports low data rates and limited payloads. A conceptual request contains:
+- Keep an append-only local event history during outages.
+- Sync queued events to a central backend when connectivity returns.
+- Use stable event IDs to avoid duplicates; flag conflicting updates for review rather than silently overwriting them.
+
+### 6. Authorized coordination
+
+- Present a proposed source and transfer plan to authorized staff.
+- Require confirmation and approval before any real-world transfer.
+- Record dispatch and receipt separately from radio delivery acknowledgement.
+
+## Example message (conceptual)
 
 ```json
 {
-  "type": "SHORTAGE_REQUEST",
-  "message_id": "req-00017",
-  "facility_id": "HC-A",
+  "message_id": "msg-001",
+  "type": "MEDICINE_REQUEST",
+  "sender_id": "centre-a",
   "medicine_code": "MED-001",
-  "formulation_code": "TAB-500MG",
-  "quantity": 40,
+  "quantity": 100,
+  "unit": "tablets",
   "urgency": "HIGH",
-  "created_at": "2026-10-17T10:00:00+05:30"
+  "created_at": "2026-10-17T09:00:00Z"
 }
 ```
 
-For actual radio transmission, encode these fields into a compact binary payload rather than transmitting verbose JSON. Use authenticated, replay-resistant messages and avoid patient-identifying information over the radio link.
+**Note:** This JSON illustrates the data model. Actual LoRa transmissions should use a smaller encoded payload appropriate to the chosen radio settings and local regulations. Sensitive data should not be broadcast in plaintext.
 
-## Hackathon demonstration
+## Proposed technology stack
 
-**Hardware:** Two LoRa-capable development boards; optionally a third relay node.
+| Layer | Candidate technology | Purpose |
+| --- | --- | --- |
+| Radio hardware | 2× ESP32-compatible LoRa development boards | Physical offline transmission |
+| Device firmware | C++ / Arduino framework or ESP-IDF | Packet encoding, sending, receiving and acknowledgements |
+| Local interface | Lightweight web UI | Enter requests and view status |
+| Coordination service | Python (FastAPI) or Node.js | Request processing, candidate matching and approval workflow |
+| Local storage | SQLite | Offline requests, stock snapshots and event log |
+| Central storage | PostgreSQL (optional for MVP) | Reconciled events after reconnecting |
+| Demo environment | Simulated facilities and stock reports | Test matching and urgency logic safely |
 
-1. Disconnect the demo computers from the internet.
-2. Submit a simulated urgent medicine request at Centre A.
-3. Transmit the request over LoRa and show it arriving at a hub or Centre B.
-4. Load synthetic batch and facility data into the matching engine.
-5. Display candidate transfers and the checks behind each recommendation.
-6. Simulate a road closure or stale stock report and demonstrate replanning or a blocked proposal.
-7. Restore internet and show event synchronization without duplicate requests.
+The final stack depends on available hardware, operating systems and time.
 
-**Suggested metrics:** Request delivery success rate, alert latency, duplicate suppression, proportion of unsafe proposals rejected, matching runtime, and synchronization correctness.
+## Hackathon demo
 
-## Safety, security, and limitations
+**Hardware:** Two ESP32 LoRa modules, connected to separate laptops or suitable power supplies. Both laptops are disconnected from the internet.
 
-- **Prototype only:** Not a certified medical device or validated clinical decision-support system.
-- **No autonomous medication decisions:** Pharmacists or other authorized personnel must verify medicine compatibility and approve transfers.
-- **No guaranteed radio coverage:** Obstacles, distance, interference, and hardware deployment affect connectivity.
-- **No guarantee of live inventory:** Offline stock records can become outdated; require confirmation before dispatch.
-- **Secure communication:** Add message authentication, encryption where appropriate, replay protection, role-based access, and audit logging before real deployment.
-- **No patient data required:** The hackathon prototype should use synthetic facility and stock records.
-- **Regulatory and operational validation:** Radio use, pharmaceutical storage/transport rules, and local authorization procedures must be checked before field deployment.
+1. Open the Centre A interface and trigger a simulated shortage.
+2. Encode and transmit the request over LoRa.
+3. Show the district hub receiving the request on a second device.
+4. Show a LoRa acknowledgement arriving back at Centre A.
+5. Run the local coordination engine against simulated facility stock reports.
+6. Display a candidate source, its last-update timestamp, and any missing confirmations.
+7. Simulate a stock confirmation and an authorized transfer approval.
+8. Reconnect the district hub to the internet and show queued events synchronizing without duplication.
 
-## What makes the project interesting?
+**Optional failure demo:** Disable one radio temporarily, queue a request, restore the radio link and demonstrate retry/deduplication. A real-world urgent shortage still requires an established backup escalation procedure.
 
-The differentiator is **not** LoRa alone or medicine redistribution alone. It is a proposed **offline-first, constraint-aware shortage coordination workflow** that remains useful when the network fails, clearly communicates uncertainty, and requires final human verification.
+## Success metrics
 
-Similar radio communications and medical logistics systems exist; novelty and field usefulness should be assessed through competitor research and interviews with rural healthcare workers.
+- Request delivery and acknowledgement success rate under tested radio conditions
+- End-to-end time from request submission to hub acknowledgement
+- Duplicate processing rate under retries
+- Correct flagging of stale stock reports
+- Correct ordering under defined urgency test scenarios
+- Consistency of local and central event histories after reconnection
 
-## Future scope
+Use measured demo results; do not claim field-tested reliability from a lab prototype.
 
-- Multi-hop store-and-forward relays with delivery acknowledgements
-- Sensor-assisted monitoring for temperature-sensitive transport
-- District-level demand forecasting using verified historical data
-- Priority-aware allocation across multiple facilities
-- Interoperability with authorized public-health inventory systems
-- Field trials with healthcare professionals and validated operational constraints
+## Key limitations and safety boundaries
 
-## Team
+- **Coverage:** LoRa range varies with terrain, antennas, interference, frequency, transmit power and deployment. Relay nodes may be needed.
+- **Capacity:** LoRa is suitable for small, infrequent messages, not images, large files or real-time voice calls.
+- **Regulations:** Radio frequencies, duty cycles and power settings must comply with applicable local rules.
+- **Security:** Device authentication, replay protection and message confidentiality require explicit design and testing.
+- **Clinical safety:** The system does not prescribe medicines, determine treatment, or automatically authorize transfers.
+- **Data quality:** Cached stock may be inaccurate. All candidate transfers require current verification and human approval.
+- **Logistics:** Communication alone cannot guarantee a vehicle, cold-chain capability or delivery.
+- **Availability:** No software can send a radio message when no viable communication path exists.
 
-Hackathon project — team details to be added.
+## Project roadmap
 
-## License
+- **Stage 1:** Establish two-way ESP32 LoRa messaging with acknowledgements.
+- **Stage 2:** Add request schema, unique IDs, retries and duplicate protection.
+- **Stage 3:** Build local interfaces and persistent offline event storage.
+- **Stage 4:** Add simulated stock reports, candidate matching and stale-data warnings.
+- **Stage 5:** Add urgency policy and human approval workflow.
+- **Stage 6:** Add eventual synchronization, tests and live demonstration.
 
-To be determined by the project team.
+## Future extensions (out of scope for the initial MVP)
+
+The same offline communication foundation could later support medicine recall notices, emergency referrals, critical medical supply alerts and other rural healthcare messages. These are **not** part of the first build.
+
+## Project differentiation
+
+MedShift LoRa does **not** claim that LoRa, offline healthcare messaging or medicine coordination are new inventions. Its proposed value is combining **connectivity-independent shortage reporting**, **acknowledged communication**, **timestamp-aware candidate matching**, and **human-authorized supply coordination** in one narrow rural-healthcare workflow.
+
+---
+
+**MedShift LoRa — Essential medicine requests, even when the internet is unavailable.**
